@@ -11,8 +11,11 @@ import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.CommandLineRunner;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.CompilerPass;
+import com.google.javascript.jscomp.CustomPassExecutionTime;
 import com.google.javascript.jscomp.DefaultPassConfig;
 import com.google.javascript.jscomp.ErrorHandler;
+import com.google.javascript.jscomp.GoogleCodingConvention;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.Result;
@@ -68,7 +71,7 @@ public class DeclarationGenerator {
     for (String arg : args) {
       File f = new File(arg);
       if (!f.exists()) {
-        System.err.println("Input file not found: " + f.getPath());
+        System.err.println("Input file not found: " + f.getAbsolutePath());
         System.exit(1);
       }
       sources.add(SourceFile.fromFile(f));
@@ -84,13 +87,19 @@ public class DeclarationGenerator {
   }
 
   private String generateDeclarations(List<SourceFile> sourceFiles) throws AssertionError {
+
     Compiler compiler = new Compiler();
+    CollectGoogProvides collector = new CollectGoogProvides(compiler);
     compiler.disableThreads();
     final CompilerOptions options = new CompilerOptions();
     options.setCheckGlobalNamesLevel(CheckLevel.ERROR);
     options.setCheckGlobalThisLevel(CheckLevel.ERROR);
+    options.setBrokenClosureRequiresLevel(CheckLevel.OFF);
+    options.addCustomPass(CustomPassExecutionTime.BEFORE_CHECKS, collector);
+    options.setCodingConvention(new GoogleCodingConvention());
     options.setCheckTypes(true);
     options.setInferTypes(true);
+    options.setClosurePass(true);
     options.setIdeMode(true); // So that we can query types after compilation.
     options.setErrorHandler(new ErrorHandler() {
       @Override
@@ -114,9 +123,6 @@ public class DeclarationGenerator {
       throw new AssertionError("Compile failed: " + Arrays.toString(compilationResult.errors));
     }
 
-    Node root = compiler.getRoot();
-    CollectGoogProvides collector = new CollectGoogProvides();
-    NodeTraversal.traverse(compiler, root, collector);
     logger.fine("Generating declarations for " + collector.googProvides);
 
     out = new StringWriter();
@@ -503,9 +509,14 @@ public class DeclarationGenerator {
     visitTypeDeclaration(ftype.getReturnType());
   }
 
-  static class CollectGoogProvides implements NodeTraversal.Callback {
+  static class CollectGoogProvides implements NodeTraversal.Callback, CompilerPass {
 
+    private final Compiler compiler;
     private HashSet<String> googProvides = new HashSet<>();
+
+    public CollectGoogProvides(Compiler compiler) {
+      this.compiler = compiler;
+    }
 
     @Override
     public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
@@ -523,5 +534,9 @@ public class DeclarationGenerator {
       }
     }
 
+    @Override
+    public void process(Node externs, Node root) {
+      NodeTraversal.traverse(compiler, root, this);
+    }
   }
 }
