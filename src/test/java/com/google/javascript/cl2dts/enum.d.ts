@@ -5,3 +5,7 @@ declare module 'goog:SomeEnum' {
     B : SomeEnum ,
   };
 }
+declare module 'goog:SomeEnumValue.X' {
+  var X : SomeEnum ;
+  export default X ;
+}
