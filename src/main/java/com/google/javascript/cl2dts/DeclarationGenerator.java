@@ -10,11 +10,11 @@ import com.google.javascript.jscomp.BasicErrorManager;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.CommandLineRunner;
 import com.google.javascript.jscomp.Compiler;
+import com.google.javascript.jscomp.CompilerInput;
 import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.DefaultPassConfig;
 import com.google.javascript.jscomp.ErrorHandler;
 import com.google.javascript.jscomp.JSError;
-import com.google.javascript.jscomp.NodeTraversal;
 import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.TypedScope;
@@ -43,6 +43,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Logger;
 
 /**
@@ -51,6 +52,7 @@ import java.util.logging.Logger;
 public class DeclarationGenerator {
 
   private static final Logger logger = Logger.getLogger(DeclarationGenerator.class.getName());
+  private static final String INTERNAL_NAMESPACE = "ಠ_ಠ.cl2dts_internal.";
 
   private StringWriter out = new StringWriter();
   private final boolean parseExterns;
@@ -98,6 +100,7 @@ public class DeclarationGenerator {
         throw new AssertionError(error.toString());
       }
     });
+
     compiler.setPassConfig(new DefaultPassConfig(options));
     // Don't print anything, throw later below.
     compiler.setErrorManager(new BasicErrorManager() {
@@ -114,17 +117,23 @@ public class DeclarationGenerator {
       throw new AssertionError("Compile failed: " + Arrays.toString(compilationResult.errors));
     }
 
-    Node root = compiler.getRoot();
-    CollectGoogProvides collector = new CollectGoogProvides();
-    NodeTraversal.traverse(compiler, root, collector);
-    logger.fine("Generating declarations for " + collector.googProvides);
+    return produceDts(compiler);
+  }
+
+  public String produceDts(Compiler compiler) {
+    Set<String> provides = new HashSet<>();
+    // TODO: only inspect inputs which were explicitly provided by the user
+    for (CompilerInput compilerInput : compiler.getInputsById().values()) {
+      provides.addAll(compilerInput.getProvides());
+    }
 
     out = new StringWriter();
     TypedScope topScope = compiler.getTopScope();
-    for (String provide : collector.googProvides) {
-      emitNoSpace("declare module 'goog:");
+    for (String provide : provides) {
+      emitNoSpace("declare module ");
+      emitNoSpace(INTERNAL_NAMESPACE);
       emitNoSpace(provide);
-      emitNoSpace("' {");
+      emitNoSpace(" {");
       indent();
       emitBreak();
       TypedVar symbol = topScope.getOwnSlot(provide);
@@ -146,9 +155,26 @@ public class DeclarationGenerator {
       unindent();
       emit("}");
       emitBreak();
+      defineExternalModule(provide);
     }
     checkState(indent == 0, "indent must be zero after printing, but is %s", indent);
     return out.toString();
+  }
+
+  private void defineExternalModule(String provide) {
+    emitNoSpace("declare module 'goog:");
+    emitNoSpace(provide);
+    emitNoSpace("' {");
+    indent();
+    emitBreak();
+    emit("export = ");
+    emitNoSpace(INTERNAL_NAMESPACE);
+    emitNoSpace(provide);
+    emitNoSpace(";");
+    emitBreak();
+    unindent();
+    emit("}");
+    emitBreak();
   }
 
   private List<SourceFile> getExterns() {
@@ -501,27 +527,5 @@ public class DeclarationGenerator {
     }
     emit(")");
     visitTypeDeclaration(ftype.getReturnType());
-  }
-
-  static class CollectGoogProvides implements NodeTraversal.Callback {
-
-    private HashSet<String> googProvides = new HashSet<>();
-
-    @Override
-    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
-      return true;
-    }
-
-    @Override
-    public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isCall() && n.getFirstChild().matchesQualifiedName("goog.provide")) {
-        Node nsParam = n.getFirstChild().getNext();
-        if (nsParam == null || !nsParam.isString()) {
-          return;
-        }
-        googProvides.add(nsParam.getString());
-      }
-    }
-
   }
 }
